@@ -2,7 +2,7 @@
 
 name = "\n\033[1m\033[93mLovepreet Singh\033[0m"
 address = "\033[1m\033[93mIndia, Delhi\nR-3, Block-R, Mohan Garden\nNew Delhi-110059\033[0m"
-phone = "\033[1m\033[93mContact : +91 9873836147\033[0m"
+phone = "\033[1m\033[93mContact : +91 **********\033[0m"
 email = "\033[1m\033[93mmoney.ape01@gmail.com\033[0m"
 instagram = "\033[1m\033[93mInstagram Handle : \033[4m\033[94mhttps://instagram.com/money.ape.network/\033[0m"
 
