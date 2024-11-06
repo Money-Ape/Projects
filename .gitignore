@@ -1,6 +1,4 @@
-<<<<<<< HEAD
-ANDROID
-=======
+#Ignored Files.!
 Android/
 bash/
 bash-manual.txt
@@ -18,10 +16,11 @@ language.sln
 parsec_backup_codes.txt
 passwd/
 Python/yt-downloader.py
+Python/.auto/git-control/main.py
+Python/.auto/git-control/setup.py
 *.bin
 SQLNotesForProfessionals.pdf
 test/
 tools/
 .vscode/
 window/
->>>>>>> ebdf597 (Python Projects Addon.!)
