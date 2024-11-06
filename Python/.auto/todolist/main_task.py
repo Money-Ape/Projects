@@ -1,9 +1,19 @@
 import mysql.connector as typing
 import pickle
-import subprocess as todo
+
 
 user=input("> Enter your database Username : ")
+passcode=input(f"> Enter {user}'s database Password : ")
 schema="taskdo"
+
+def con():
+    global user, passcode, schema
+    return typing.connect(
+            host="localhost",
+            user=user,
+            passwd=passcode,
+            database=schema.format('{}','{}','{}')
+            )
 
 def uname_save(user):
     with open("ufile.bin","wb") as f:
@@ -34,16 +44,11 @@ if __name__=="__main__":
 
 # Connection Verification...
 while True:
-    passcode=input(f"> Enter {user}'s database Password : ")
-    try:  # Password will verify, if gets wrong it will recontinue.!
-        con=typing.connect(
-            host="localhost",
-            user=user,
-            passwd=passcode,
-            database=schema.format('{}','{}','{}')
-            )
 
-        if con.is_connected():  # Connection is successfully established so exited from the loop.!
+    try:  # Password will verify, if gets wrong it will recontinue.!
+        db_con = con()
+
+        if db_con.is_connected():  # Connection is successfully established so exited from the loop.!
             print(f"\033[1;32m{user}'s\033[0m database connected successfully.!\n'\033[1;32m{schema}\033[0m' has been selected as default Database.!")
             break
 
@@ -53,16 +58,15 @@ while True:
         print(f"\033[1;31mYou Entered : {passcode} as passwd... Failed connection..,\nPlease try again.!\033[0m")
 
     # Optionally close the connection in case of a partial connection
-    if 'con' in locals() and is_connected():
-        con.close()
+    if 'db_con' in locals() and db_con.is_connected():
+        db_con.close()
         print("\033[1;32mconnection closed.!\033[0m")
 
-con.cursor()
+cur = db_con.cursor()
 
 
 
 
-
-if con.is_connected():
-    con.close()
+if db_con.is_connected():
+    db_con.close()
     print("\033[1;32mconnection closed.!\033[0m")
