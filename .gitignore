@@ -1,1 +1,27 @@
+<<<<<<< HEAD
 ANDROID
+=======
+Android/
+bash/
+bash-manual.txt
+bookmarks_09_09_2024.html
+C/
+code/
+CPP/
+Csharp/
+Discord/
+ffmpeg/
+Git/
+.ipynb_checkpoints/
+Jupyter-Lab/
+language.sln
+parsec_backup_codes.txt
+passwd/
+Python/yt-downloader.py
+Python/.auto/todolist/ufile.bin
+SQLNotesForProfessionals.pdf
+test/
+tools/
+.vscode/
+window/
+>>>>>>> ebdf597 (Python Projects Addon.!)
