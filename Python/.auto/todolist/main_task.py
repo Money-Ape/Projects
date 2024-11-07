@@ -42,28 +42,31 @@ def main():
 if __name__=="__main__":
     main()
 
+db_con = con()
 # Connection Verification...
-while True:
+def verify():
+    global db_con
+    while True:
 
-    try:  # Password will verify, if gets wrong it will recontinue.!
-        db_con = con()
+        try:  # Password will verify, if gets wrong it will recontinue.!
 
-        if db_con.is_connected():  # Connection is successfully established so exited from the loop.!
-            print(f"\033[1;32m{user}'s\033[0m database connected successfully.!\n'\033[1;32m{schema}\033[0m' has been selected as default Database.!")
-            break
+            if db_con.is_connected():  # Connection is successfully established so exited from the loop.!
+                print(f"\033[1;32m{user}'s\033[0m database connected successfully.!\n'\033[1;32m{schema}\033[0m' has been selected as default Database.!")
+                break
 
-    # If any Error, displayed by connector as 'err' here.!
-    except typing.Error as err:
-        print(f"\033[1;31mError...  {err}\033[0m")
-        print(f"\033[1;31mYou Entered : {passcode} as passwd... Failed connection..,\nPlease try again.!\033[0m")
+        # If any Error, displayed by connector as 'err' here.!
+        except typing.Error as err:
+            print(f"\033[1;31mError...  {err}\033[0m")
+            print(f"\033[1;31mYou Entered : {passcode} as passwd... Failed connection..,\nPlease try again.!\033[0m")
 
-    # Optionally close the connection in case of a partial connection
-    if 'db_con' in locals() and db_con.is_connected():
-        db_con.close()
-        print("\033[1;32mconnection closed.!\033[0m")
+        # Optionally close the connection in case of a partial connection
+        if 'db_con' in locals() and db_con.is_connected():
+            db_con.close()
+            print("\033[1;32mconnection closed.!\033[0m")
+
+verify()
 
 cur = db_con.cursor()
-
 
 
 
