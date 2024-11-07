@@ -18,6 +18,7 @@ passwd/
 Python/yt-downloader.py
 Python/.auto/git-control/main.py
 Python/.auto/git-control/setup.py
+Python/.auto/todolist/__pycache__/
 *.bin
 SQLNotesForProfessionals.pdf
 test/
