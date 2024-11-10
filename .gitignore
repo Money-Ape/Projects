@@ -1,0 +1,32 @@
+# Ignored Files.!
+Android/
+bash/
+bash-manual.txt
+bookmarks_09_09_2024.html
+C/
+code/
+CPP/
+Csharp/
+Discord/
+ffmpeg/
+Git/
+.ipynb_checkpoints/
+Jupyter-Lab/
+language.sln
+parsec_backup_codes.txt
+passwd/
+Python/ATM_Project/ATM_Records_admin.txt
+Python/.auto/todolist/__pycache__/
+*.bin
+
+Python/.auto/todolist/ufile.bin
+>>>>>>> 5218418 (Git updated.)
+SQLNotesForProfessionals.pdf
+<<<<<<< HEAD
+test/
+tools/
+.vscode/
+window/
+
+# My EBook
+Python/PYTHON/
