@@ -47,13 +47,12 @@ def vu_input():
     if uverification(v_uname, v_passcode):
         return v_uname, v_passcode
     else:
-        print("Verification failed.")
         return None, None
 
 def main_hash():
     existing_data = load_hashed_udata()
     if existing_data is None:
-        print("\033[1;31mNo credentials found. Setting up new credentials.\033[0m")
+        print("\033[1;31mNo credentials found.! Setting up new credentials.\033[0m")
         return nu_input()
     else:
         print("\033[1;33mCredentials found. Verifying...\033[0m")
