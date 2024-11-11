@@ -10,6 +10,7 @@ if db_con.is_connected():
             result = cursor.fetchone()
             print(result[0])
 
+    # Check for the Errors.!
     except Exception as e:
         print(f"\033[1;31mQuery execution failed: {e}\033[0m")
 
