@@ -8,7 +8,7 @@ def money_ape():
     print("\033[1;93m| |  | | (_) | | | |  __/ |_| |_____/ ___ \\| |_) |  __/\033[0m")
     print("\033[1;93m|_|  |_|\\___/|_| |_|\\___|\\__, |    /_/   \\_\\ .__/ \\___|\033[0m")
     print("\033[1;93m                         |___/             |_|\033[0m")
-    print("\033[1;32m\n                    Github : Money-Ape\033[0m {verison : 1.0.0}\n")
+    print("\033[1;32m\n                    Github : Money-Ape\033[0m {verison : 1.1}\n")
 money_ape()
 
 
