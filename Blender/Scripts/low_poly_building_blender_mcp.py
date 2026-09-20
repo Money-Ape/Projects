@@ -1,3 +1,11 @@
+# Low-poly 3-story building (corrected version).
+# Blender 4.2+ / 5.x  (bpy)
+#
+# Usage:
+#   1. Open Blender > Scripting > Text Editor.
+#   2. Open this file and press Run Script.
+#   3. The script clears the current scene and builds the complete model.
+
 import bpy
 import math
 from mathutils import Vector
@@ -15,788 +23,402 @@ WALL_Z0 = 0.35
 
 WINDOW_W = 1.15
 WINDOW_H = 1.65
+WINDOW_CZ = 1.60          # window centre above each floor's base (keeps frames clear of dentils)
+
+ADD_SIGN = False          # optional "APARTMENTS" sign on the roof access room
+SAVE_BLEND = False        # set True to save the scene next to the current .blend
+
+# Filled in by build() AFTER the scene is cleared (see notes: creating them
+# before clear_scene() got them deleted).
+M = {}      # materials
+COLS = {}   # collections
+
 
 # ============================================================
-# SCENE / COLLECTION HELPERS
+# SCENE / COLLECTION / MATERIAL SETUP
 # ============================================================
 
 def clear_scene():
-    bpy.ops.object.select_all(action='SELECT')
-    bpy.ops.object.delete(use_global=False)
+    """Remove everything using the data API (no operator/context needed)."""
+    for obj in list(bpy.data.objects):
+        bpy.data.objects.remove(obj, do_unlink=True)
+    for c in list(bpy.data.collections):
+        bpy.data.collections.remove(c)
+    for block in (bpy.data.meshes, bpy.data.curves, bpy.data.materials,
+                  bpy.data.cameras, bpy.data.lights):
+        for b in list(block):
+            if b.users == 0:
+                block.remove(b)
 
-    for datablocks in (
-        bpy.data.meshes,
-        bpy.data.curves,
-        bpy.data.materials,
-        bpy.data.cameras,
-        bpy.data.lights,
-    ):
-        # Keep datablocks that Blender may require internally.
-        for block in list(datablocks):
-            if block.users == 0:
-                datablocks.remove(block)
 
-def collection(name):
-    c = bpy.data.collections.get(name)
-    if c is None:
+def init_collections():
+    for name in ("BUILDING", "WINDOWS", "BALCONIES", "FIRE_ESCAPE", "ROOF", "LIGHTS"):
         c = bpy.data.collections.new(name)
         bpy.context.scene.collection.children.link(c)
-    return c
+        COLS[name] = c
 
-COL_BUILDING = collection("BUILDING")
-COL_WINDOWS = collection("WINDOWS")
-COL_BALCONIES = collection("BALCONIES")
-COL_FIRE_ESCAPE = collection("FIRE_ESCAPE")
-COL_ROOF = collection("ROOF")
-COL_LIGHTS = collection("LIGHTS")
 
-def move_to_collection(obj, target):
-    for c in list(obj.users_collection):
-        c.objects.unlink(obj)
-    target.objects.link(obj)
-
-# ============================================================
-# MATERIALS
-# ============================================================
-
-def mat(name, color, roughness=0.7, metallic=0.0):
-    m = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+def make_material(name, color, roughness=0.7, metallic=0.0,
+                  emission=None, emission_strength=0.0):
+    m = bpy.data.materials.new(name)
     m.diffuse_color = (*color, 1.0)
-    m.use_nodes = True
-
+    if m.node_tree is None:          # Blender < 5.0 needs use_nodes; 5.0+ always has a tree
+        m.use_nodes = True
     bsdf = m.node_tree.nodes.get("Principled BSDF")
     if bsdf:
         bsdf.inputs["Base Color"].default_value = (*color, 1.0)
         bsdf.inputs["Roughness"].default_value = roughness
         bsdf.inputs["Metallic"].default_value = metallic
+        if emission is not None:
+            if "Emission Color" in bsdf.inputs:
+                bsdf.inputs["Emission Color"].default_value = (*emission, 1.0)
+            if "Emission Strength" in bsdf.inputs:
+                bsdf.inputs["Emission Strength"].default_value = emission_strength
     return m
 
-YELLOW = mat("Wall_Yellow", (0.70, 0.46, 0.035), 0.78)
-YELLOW_LIGHT = mat("Wall_Yellow_Light", (0.95, 0.68, 0.055), 0.75)
-WHITE = mat("Cornice_White", (0.82, 0.82, 0.77), 0.65)
-DARK = mat("Iron_Dark", (0.075, 0.085, 0.095), 0.65, 0.05)
-DARK2 = mat("Iron_Dark2", (0.12, 0.13, 0.14), 0.72)
-GLASS = mat("Window_Glass", (0.65, 0.82, 0.85), 0.18, 0.0)
-WOOD = mat("Door_Red", (0.34, 0.055, 0.045), 0.72)
-WINDOW_FRAME = mat("Window_Frame", (0.23, 0.20, 0.14), 0.72)
-WINDOW_LIGHT = mat("Window_Lit", (1.0, 0.78, 0.38), 0.30)
-ROOF = mat("Roof", (0.16, 0.17, 0.18), 0.82)
-GROUND = mat("Ground", (0.055, 0.06, 0.065), 0.95)
+
+def init_materials():
+    M["yellow"] = make_material("Wall_Yellow", (0.70, 0.46, 0.035), 0.78)
+    M["white"] = make_material("Cornice_White", (0.82, 0.82, 0.77), 0.65)
+    M["dark"] = make_material("Iron_Dark", (0.075, 0.085, 0.095), 0.65, 0.05)
+    M["dark2"] = make_material("Iron_Dark2", (0.12, 0.13, 0.14), 0.72)
+    M["glass"] = make_material("Window_Glass", (0.65, 0.82, 0.85), 0.18)
+    M["door"] = make_material("Door_Red", (0.34, 0.055, 0.045), 0.72)
+    M["frame"] = make_material("Window_Frame", (0.23, 0.20, 0.14), 0.72)
+    M["lit"] = make_material("Window_Lit", (1.0, 0.78, 0.38), 0.30,
+                             emission=(1.0, 0.72, 0.30), emission_strength=0.8)
+    M["roof"] = make_material("Roof", (0.16, 0.17, 0.18), 0.82)
+    M["ground"] = make_material("Ground", (0.055, 0.06, 0.065), 0.95)
+
 
 # ============================================================
-# PRIMITIVE HELPERS
+# PRIMITIVE HELPERS (data API only - fast and context independent)
 # ============================================================
 
-def cube(name, loc, scale, material, bevel=0.0, coll=COL_BUILDING):
-    bpy.ops.mesh.primitive_cube_add(location=loc)
-    o = bpy.context.object
-    o.name = name
-    o.scale = (scale[0] / 2, scale[1] / 2, scale[2] / 2)
-    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+CUBE_FACES = [(0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4),
+              (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)]
 
+
+def _finish(name, mesh, loc, material, bevel, coll, min_dim=1.0):
+    obj = bpy.data.objects.new(name, mesh)
+    obj.location = Vector(loc)
+    COLS[coll].objects.link(obj)
     if material:
-        o.data.materials.append(material)
-
+        mesh.materials.append(material)
     if bevel > 0:
-        mod = o.modifiers.new("Small_Bevel", 'BEVEL')
-        mod.width = bevel
+        mod = obj.modifiers.new("Small_Bevel", 'BEVEL')
+        mod.width = min(bevel, min_dim * 0.4)
         mod.segments = 1
+    return obj
 
-    move_to_collection(o, coll)
-    return o
 
-def cylinder(name, loc, radius, depth, material, vertices=8, rotation=None, coll=COL_BUILDING):
-    bpy.ops.mesh.primitive_cylinder_add(
-        vertices=vertices,
-        radius=radius,
-        depth=depth,
-        location=loc,
-        rotation=rotation or (0, 0, 0),
-    )
-    o = bpy.context.object
-    o.name = name
-    if material:
-        o.data.materials.append(material)
-    move_to_collection(o, coll)
-    return o
+def cube(name, loc, size, material=None, bevel=0.0, coll="BUILDING"):
+    """Box centred on `loc` with full dimensions `size` = (x, y, z)."""
+    hx, hy, hz = size[0] / 2, size[1] / 2, size[2] / 2
+    verts = [(-hx, -hy, -hz), (hx, -hy, -hz), (hx, hy, -hz), (-hx, hy, -hz),
+             (-hx, -hy, hz), (hx, -hy, hz), (hx, hy, hz), (-hx, hy, hz)]
+    me = bpy.data.meshes.new(name)
+    me.from_pydata(verts, [], CUBE_FACES)
+    me.update()
+    return _finish(name, me, loc, material, bevel, coll, min(size))
 
-def beam_between(name, a, b, thickness, material, coll=COL_BUILDING):
-    a = Vector(a)
-    b = Vector(b)
+
+def cylinder(name, loc, radius, depth, material, vertices=8, rotation=None, coll="BUILDING"):
+    import bmesh
+    bm = bmesh.new()
+    bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=False, segments=vertices,
+                          radius1=radius, radius2=radius, depth=depth)
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    obj = _finish(name, me, loc, material, 0.0, coll)
+    if rotation:
+        obj.rotation_euler = rotation
+    return obj
+
+
+def beam_between(name, a, b, thickness, material, coll="BUILDING"):
+    a, b = Vector(a), Vector(b)
     d = b - a
-    length = d.length
-    mid = (a + b) / 2
-
-    o = cube(
-        name,
-        mid,
-        (thickness, thickness, length),
-        material,
-        0.02,
-        coll
-    )
-
+    o = cube(name, (a + b) / 2, (thickness, thickness, d.length), material, 0.02, coll)
     o.rotation_mode = 'QUATERNION'
     o.rotation_quaternion = Vector((0, 0, 1)).rotation_difference(d.normalized())
     return o
 
-def add_text(name, text, loc, size, material, rotation=(math.pi/2, 0, 0)):
-    bpy.ops.object.text_add(location=loc, rotation=rotation)
-    o = bpy.context.object
-    o.name = name
-    o.data.body = text
-    o.data.align_x = 'CENTER'
-    o.data.align_y = 'CENTER'
-    o.data.size = size
-    o.data.extrude = 0.015
-    o.data.materials.append(material)
-    return o
+
+def add_text(name, text, loc, size, material, rotation=(math.pi / 2, 0, 0), coll="ROOF"):
+    curve = bpy.data.curves.new(name, 'FONT')
+    curve.body = text
+    curve.align_x = 'CENTER'
+    curve.align_y = 'CENTER'
+    curve.size = size
+    curve.extrude = 0.015
+    curve.materials.append(material)
+    obj = bpy.data.objects.new(name, curve)
+    obj.location = Vector(loc)
+    obj.rotation_euler = rotation
+    COLS[coll].objects.link(obj)
+    return obj
+
+
+def floor_z(f):
+    """Z of the base of floor f (0-based)."""
+    return WALL_Z0 + f * FLOOR_H
+
+
+CORNICE_TOP = floor_z(FLOORS - 1) + WALL_H + 0.04 + 0.11   # top of the last cornice band
+ROOF_Z = CORNICE_TOP + 0.125                                 # centre of the 0.25 roof slab
+ROOF_TOP = ROOF_Z + 0.125
+
 
 # ============================================================
 # BUILDING CORE
 # ============================================================
 
+def build_ground():
+    cube("Ground", (0, 0, -0.175), (20, 18, 0.35), M["ground"], 0.05)
+    cube("Front_Pavement", (0, -5.4, 0.03), (12, 4.0, 0.06), M["dark2"], 0.03)
+    # Plinth closes the gap between the ground and the first floor.
+    cube("Plinth", (0, 0, WALL_Z0 / 2 + 0.01),
+         (BUILDING_W + 0.30, BUILDING_D + 0.30, WALL_Z0 + 0.02), M["dark"], 0.03)
+
+
 def build_walls():
-    for floor in range(FLOORS):
-        z = WALL_Z0 + floor * FLOOR_H + WALL_H / 2
+    for f in range(FLOORS):
+        base = floor_z(f)
+        z = base + WALL_H / 2
 
-        # Main four walls. Openings are represented by darker window
-        # assemblies placed over the wall surface; this keeps the model
-        # lightweight and very stable.
-        cube(
-            f"Wall_F{floor+1}_Front",
-            (0, -BUILDING_D/2, z),
-            (BUILDING_W, 0.30, WALL_H),
-            YELLOW,
-            0.04
-        )
+        cube(f"Wall_F{f+1}_Front", (0, -BUILDING_D / 2, z), (BUILDING_W, 0.30, WALL_H), M["yellow"], 0.04)
+        cube(f"Wall_F{f+1}_Back", (0, BUILDING_D / 2, z), (BUILDING_W, 0.30, WALL_H), M["yellow"], 0.04)
+        cube(f"Wall_F{f+1}_Left", (-BUILDING_W / 2, 0, z), (0.30, BUILDING_D, WALL_H), M["yellow"], 0.04)
+        cube(f"Wall_F{f+1}_Right", (BUILDING_W / 2, 0, z), (0.30, BUILDING_D, WALL_H), M["yellow"], 0.04)
 
-        cube(
-            f"Wall_F{floor+1}_Back",
-            (0, BUILDING_D/2, z),
-            (BUILDING_W, 0.30, WALL_H),
-            YELLOW,
-            0.04
-        )
+        # White cornice band / floor slab.
+        cube(f"Cornice_F{f+1}", (0, 0, base + WALL_H + 0.04),
+             (BUILDING_W + 0.55, BUILDING_D + 0.55, 0.22), M["white"], 0.035)
 
-        cube(
-            f"Wall_F{floor+1}_Left",
-            (-BUILDING_W/2, 0, z),
-            (0.30, BUILDING_D, WALL_H),
-            YELLOW,
-            0.04
-        )
+        # Dark strip at the base of each floor.
+        cube(f"Foundation_F{f+1}", (0, 0, base - 0.05),
+             (BUILDING_W + 0.35, BUILDING_D + 0.35, 0.22), M["dark"], 0.03)
 
-        cube(
-            f"Wall_F{floor+1}_Right",
-            (BUILDING_W/2, 0, z),
-            (0.30, BUILDING_D, WALL_H),
-            YELLOW,
-            0.04
-        )
-
-        # Floor separator / white cornice.
-        z_band = WALL_Z0 + floor * FLOOR_H + WALL_H + 0.04
-        cube(
-            f"Cornice_F{floor+1}",
-            (0, 0, z_band),
-            (BUILDING_W + 0.55, BUILDING_D + 0.55, 0.22),
-            WHITE,
-            0.035
-        )
-
-        # Dark foundation strip.
-        cube(
-            f"Foundation_F{floor+1}",
-            (0, 0, WALL_Z0 + floor * FLOOR_H - 0.05),
-            (BUILDING_W + 0.35, BUILDING_D + 0.35, 0.22),
-            DARK,
-            0.03
-        )
 
 def build_decorative_cornice():
-    # Repeated white triangular/rectangular teeth under every floor band.
-    for floor in range(FLOORS):
-        z = WALL_Z0 + floor * FLOOR_H + WALL_H - 0.20
+    for f in range(FLOORS):
+        z = floor_z(f) + WALL_H - 0.20
 
-        # Front + back.
-        for y in (-BUILDING_D/2 - 0.18, BUILDING_D/2 + 0.18):
+        for y in (-BUILDING_D / 2 - 0.18, BUILDING_D / 2 + 0.18):
             for i in range(14):
-                x = -BUILDING_W/2 + 0.35 + i * (BUILDING_W - 0.7) / 13
-                cube(
-                    f"F{floor+1}_Dentil_FrontBack_{i}",
-                    (x, y, z),
-                    (0.28, 0.24, 0.45),
-                    WHITE,
-                    0.015
-                )
+                x = -BUILDING_W / 2 + 0.35 + i * (BUILDING_W - 0.7) / 13
+                cube(f"F{f+1}_Dentil_FB_{i}", (x, y, z), (0.28, 0.24, 0.45), M["white"], 0.015)
 
-        # Sides.
-        for x in (-BUILDING_W/2 - 0.18, BUILDING_W/2 + 0.18):
+        for x in (-BUILDING_W / 2 - 0.18, BUILDING_W / 2 + 0.18):
             for i in range(10):
-                y = -BUILDING_D/2 + 0.30 + i * (BUILDING_D - 0.60) / 9
-                cube(
-                    f"F{floor+1}_Dentil_Side_{i}",
-                    (x, y, z),
-                    (0.24, 0.28, 0.45),
-                    WHITE,
-                    0.015
-                )
+                y = -BUILDING_D / 2 + 0.30 + i * (BUILDING_D - 0.60) / 9
+                cube(f"F{f+1}_Dentil_Side_{i}", (x, y, z), (0.24, 0.28, 0.45), M["white"], 0.015)
+
 
 # ============================================================
 # WINDOWS
 # ============================================================
 
-def build_window(name, x, y, z, facing="front"):
-    # Window is a shallow framed assembly.
-    if facing in ("front", "back"):
-        depth_axis = 0.16
-        frame_depth = 0.12
-        glass = cube(
-            name + "_Glass",
-            (x, y, z),
-            (WINDOW_W, frame_depth, WINDOW_H),
-            WINDOW_LIGHT,
-            0.015,
-            COL_WINDOWS
-        )
+def build_window(name, cx, cy, z, facing):
+    """(cx, cy) is the point on the OUTER wall face. One generic routine for all four sides."""
+    out = {"front": (0, -1), "back": (0, 1), "left": (-1, 0), "right": (1, 0)}[facing]
+    along = (1, 0) if facing in ("front", "back") else (0, 1)
+    fb = facing in ("front", "back")
 
-        # Outer frame.
-        for sx in (-1, 1):
-            cube(
-                name + "_FrameV",
-                (x + sx*(WINDOW_W/2 + 0.075), y, z),
-                (0.13, 0.20, WINDOW_H + 0.18),
-                WINDOW_FRAME,
-                0.02,
-                COL_WINDOWS
-            )
+    def part(suffix, u, v, w, d, h, dz, material, bevel):
+        px = cx + along[0] * u + out[0] * v
+        py = cy + along[1] * u + out[1] * v
+        size = (w, d, h) if fb else (d, w, h)
+        cube(f"{name}_{suffix}", (px, py, z + dz), size, material, bevel, "WINDOWS")
 
-        for sz in (-1, 1):
-            cube(
-                name + "_FrameH",
-                (x, y, z + sz*(WINDOW_H/2 + 0.075)),
-                (WINDOW_W + 0.28, 0.20, 0.13),
-                WINDOW_FRAME,
-                0.02,
-                COL_WINDOWS
-            )
+    part("Glass", 0, 0.02, WINDOW_W, 0.12, WINDOW_H, 0, M["lit"], 0.015)
 
-        # Mullions.
-        for col in (-0.22, 0.22):
-            cube(
-                name + "_MullionV",
-                (x + col, y - 0.015, z),
-                (0.055, 0.22, WINDOW_H),
-                WINDOW_FRAME,
-                0.01,
-                COL_WINDOWS
-            )
+    for s in (-1, 1):
+        part("FrameV", s * (WINDOW_W / 2 + 0.075), 0.02, 0.13, 0.20, WINDOW_H + 0.18, 0, M["frame"], 0.02)
+        part("FrameH", 0, 0.02, WINDOW_W + 0.28, 0.20, 0.13, s * (WINDOW_H / 2 + 0.075), M["frame"], 0.02)
 
-        for row in (-0.30, 0.0, 0.30):
-            cube(
-                name + "_MullionH",
-                (x, y - 0.015, z + row),
-                (WINDOW_W, 0.22, 0.055),
-                WINDOW_FRAME,
-                0.01,
-                COL_WINDOWS
-            )
+    for u in (-0.22, 0.22):
+        part("MullionV", u, 0.035, 0.055, 0.22, WINDOW_H, 0, M["frame"], 0.01)
+    for dz in (-0.30, 0.0, 0.30):
+        part("MullionH", 0, 0.035, WINDOW_W, 0.22, 0.055, dz, M["frame"], 0.01)
 
-        # Window sill.
-        cube(
-            name + "_Sill",
-            (x, y - 0.05, z - WINDOW_H/2 - 0.14),
-            (WINDOW_W + 0.35, 0.32, 0.13),
-            WHITE,
-            0.02,
-            COL_WINDOWS
-        )
+    part("Sill", 0, 0.07, WINDOW_W + 0.35, 0.32, 0.13, -WINDOW_H / 2 - 0.14, M["white"], 0.02)
 
-    else:
-        # Rotate the same visual system for left/right walls.
-        cube(
-            name + "_Glass",
-            (x, y, z),
-            (0.16, WINDOW_W, WINDOW_H),
-            WINDOW_LIGHT,
-            0.015,
-            COL_WINDOWS
-        )
-
-        for sy in (-1, 1):
-            cube(
-                name + "_FrameH",
-                (x, y + sy*(WINDOW_W/2 + 0.075), z),
-                (0.20, 0.13, WINDOW_H + 0.18),
-                WINDOW_FRAME,
-                0.02,
-                COL_WINDOWS
-            )
-
-        for sz in (-1, 1):
-            cube(
-                name + "_FrameV",
-                (x, y, z + sz*(WINDOW_H/2 + 0.075)),
-                (0.20, WINDOW_W + 0.28, 0.13),
-                WINDOW_FRAME,
-                0.02,
-                COL_WINDOWS
-            )
-
-        # Mullions.
-        for col in (-0.22, 0.22):
-            cube(
-                name + "_Mullion",
-                (x + 0.015, y + col, z),
-                (0.22, 0.055, WINDOW_H),
-                WINDOW_FRAME,
-                0.01,
-                COL_WINDOWS
-            )
-
-        for row in (-0.30, 0.0, 0.30):
-            cube(
-                name + "_Mullion",
-                (x + 0.015, y, z + row),
-                (0.22, WINDOW_W, 0.055),
-                WINDOW_FRAME,
-                0.01,
-                COL_WINDOWS
-            )
 
 def build_windows():
     x_positions = (-2.65, 0.0, 2.65)
     y_positions = (-1.75, 0.0, 1.75)
+    fy = BUILDING_D / 2 + 0.15
+    fx = BUILDING_W / 2 + 0.15
 
-    for floor in range(FLOORS):
-        z = WALL_Z0 + floor * FLOOR_H + 1.72
+    for f in range(FLOORS):
+        z = floor_z(f) + WINDOW_CZ
 
-        # Front: ground floor gets a door in the center.
         for i, x in enumerate(x_positions):
-            if floor == 0 and i == 0:
-                continue
-            build_window(
-                f"Front_F{floor+1}_{i+1}",
-                x,
-                -BUILDING_D/2 - 0.17,
-                z,
-                "front"
-            )
-
-        # Back.
+            if f == 0 and i == 0:
+                continue                      # door position
+            build_window(f"Front_F{f+1}_{i+1}", x, -fy, z, "front")
+            
         for i, x in enumerate(x_positions):
-            build_window(
-                f"Back_F{floor+1}_{i+1}",
-                x,
-                BUILDING_D/2 + 0.17,
-                z,
-                "back"
-            )
+            build_window(f"Back_F{f+1}_{i+1}", x, fy, z, "back")
 
-        # Left/right.
         for i, y in enumerate(y_positions):
-            build_window(
-                f"Left_F{floor+1}_{i+1}",
-                -BUILDING_W/2 - 0.17,
-                y,
-                z,
-                "left"
-            )
+            build_window(f"Left_F{f+1}_{i+1}", -fx, y, z, "left")
+            build_window(f"Right_F{f+1}_{i+1}", fx, y, z, "right")
 
-            build_window(
-                f"Right_F{floor+1}_{i+1}",
-                BUILDING_W/2 + 0.17,
-                y,
-                z,
-                "right"
-            )
 
 def build_front_door():
-    z = WALL_Z0 + 1.55
     x = -2.65
-    y = -BUILDING_D/2 - 0.18
+    y = -BUILDING_D / 2 - 0.18
+    door_h = 2.15
+    z = WALL_Z0 + door_h / 2 + 0.02
 
-    cube(
-        "Main_Door",
-        (x, y, z),
-        (1.05, 0.22, 2.15),
-        WOOD,
-        0.04,
-        COL_WINDOWS
-    )
+    cube("Main_Door", (x, y, z), (1.05, 0.22, door_h), M["door"], 0.04, "WINDOWS")
+    cube("Door_Frame_L", (x - 0.60, y, z + 0.10), (0.14, 0.28, door_h + 0.2), M["frame"], 0.02, "WINDOWS")
+    cube("Door_Frame_R", (x + 0.60, y, z + 0.10), (0.14, 0.28, door_h + 0.2), M["frame"], 0.02, "WINDOWS")
+    cube("Door_Lintel", (x, y, z + door_h / 2 + 0.12), (1.34, 0.28, 0.14), M["frame"], 0.02, "WINDOWS")
+    cube("Door_Step", (x, y - 0.45, 0.18), (1.7, 0.8, 0.36), M["dark2"], 0.02, "WINDOWS")
 
-    cube(
-        "Door_Frame_L",
-        (x - 0.60, y, z),
-        (0.14, 0.28, 2.35),
-        WINDOW_FRAME,
-        0.02,
-        COL_WINDOWS
-    )
-    cube(
-        "Door_Frame_R",
-        (x + 0.60, y, z),
-        (0.14, 0.28, 2.35),
-        WINDOW_FRAME,
-        0.02,
-        COL_WINDOWS
-    )
+    cylinder("Door_Handle", (x + 0.31, y - 0.15, WALL_Z0 + 1.0), 0.055, 0.08, M["white"], 8,
+             rotation=(math.pi / 2, 0, 0), coll="WINDOWS")
 
-    cylinder(
-        "Door_Handle",
-        (x + 0.31, y - 0.15, z),
-        0.055,
-        0.08,
-        WHITE,
-        8,
-        rotation=(math.pi/2, 0, 0),
-        coll=COL_WINDOWS
-    )
 
 # ============================================================
-# BALCONIES + RAILINGS
+# RAILINGS (now take a centre so they sit where the balcony is)
 # ============================================================
 
-def railing_x(name_prefix, y, z, width, height=1.0):
-    # horizontal top and bottom
-    beam_between(
-        name_prefix + "_Top",
-        (-width/2, y, z + height),
-        (width/2, y, z + height),
-        0.12, DARK, COL_BALCONIES
-    )
-    beam_between(
-        name_prefix + "_Bottom",
-        (-width/2, y, z),
-        (width/2, y, z),
-        0.10, DARK, COL_BALCONIES
-    )
-
-    count = max(2, int(width / 0.38))
+def _rail_posts(prefix, a, b, z, height, coll):
+    a, b = Vector(a), Vector(b)
+    beam_between(prefix + "_Top", a + Vector((0, 0, height)), b + Vector((0, 0, height)), 0.12, M["dark"], coll)
+    beam_between(prefix + "_Bottom", a, b, 0.10, M["dark"], coll)
+    length = (b - a).length
+    count = max(2, int(length / 0.38))
     for i in range(count + 1):
-        x = -width/2 + i * width/count
-        beam_between(
-            name_prefix + f"_Post_{i}",
-            (x, y, z),
-            (x, y, z + height),
-            0.075, DARK, COL_BALCONIES
-        )
+        p = a.lerp(b, i / count)
+        beam_between(prefix + f"_Post_{i}", p, p + Vector((0, 0, height)), 0.075, M["dark"], coll)
 
-def railing_y(name_prefix, x, z, depth, height=1.0):
-    beam_between(
-        name_prefix + "_Top",
-        (x, -depth/2, z + height),
-        (x, depth/2, z + height),
-        0.12, DARK, COL_BALCONIES
-    )
-    beam_between(
-        name_prefix + "_Bottom",
-        (x, -depth/2, z),
-        (x, depth/2, z),
-        0.10, DARK, COL_BALCONIES
-    )
 
-    count = max(2, int(depth / 0.38))
-    for i in range(count + 1):
-        y = -depth/2 + i * depth/count
-        beam_between(
-            name_prefix + f"_Post_{i}",
-            (x, y, z),
-            (x, y, z + height),
-            0.075, DARK, COL_BALCONIES
-        )
+def railing_x(prefix, cx, y, z, width, height=1.0, coll="BALCONIES"):
+    """Railing running along X, centred on x = cx. `z` is the walking surface."""
+    _rail_posts(prefix, (cx - width / 2, y, z), (cx + width / 2, y, z), z, height, coll)
 
-def build_balcony(side="right", floor=1):
-    # floor is zero based. Main balconies on upper floors.
-    z = WALL_Z0 + floor * FLOOR_H + 0.25
-    if side == "right":
-        x = BUILDING_W/2 + 1.25
-        y = 0.55
-    else:
-        x = -BUILDING_W/2 - 1.25
-        y = 0.55
 
-    # Platform.
-    cube(
-        f"Balcony_F{floor+1}_Platform",
-        (x, y, z),
-        (2.45, 3.15, 0.18),
-        DARK2,
-        0.03,
-        COL_BALCONIES
-    )
+def railing_y(prefix, x, cy, z, depth, height=1.0, coll="BALCONIES"):
+    """Railing running along Y, centred on y = cy. `z` is the walking surface."""
+    _rail_posts(prefix, (x, cy - depth / 2, z), (x, cy + depth / 2, z), z, height, coll)
 
-    # Brackets underneath.
+
+# ============================================================
+# BALCONIES
+# ============================================================
+
+def build_balcony(side="left", floor=1):
+    sgn = 1 if side == "right" else -1
+    z = floor_z(floor) + 0.25
+    x = sgn * (BUILDING_W / 2 + 1.25)
+    y = 0.55
+    top = z + 0.09
+    name = f"Balcony_{side}_F{floor+1}"
+
+    cube(f"{name}_Platform", (x, y, z), (2.45, 3.15, 0.18), M["dark2"], 0.03, "BALCONIES")
+
+    # Brackets: low on the wall, rising to the outer edge of the platform.
     for yy in (y - 1.0, y + 1.0):
-        beam_between(
-            f"Balcony_F{floor+1}_Bracket",
-            (BUILDING_W/2 if side == "right" else -BUILDING_W/2, yy, z - 0.05),
-            (x, yy, z - 0.80),
-            0.13, DARK, COL_BALCONIES
-        )
+        beam_between(f"{name}_Bracket",
+                     (sgn * (BUILDING_W / 2 + 0.15), yy, z - 0.85),
+                     (x + sgn * 1.0, yy, z - 0.10),
+                     0.13, M["dark"], "BALCONIES")
 
-    if side == "right":
-        railing_x(
-            f"Balcony_F{floor+1}_Front",
-            y - 1.52,
-            z,
-            2.45,
-            1.0
-        )
-        railing_y(
-            f"Balcony_F{floor+1}_Outer",
-            x + 1.20,
-            z,
-            3.05,
-            1.0
-        )
-        railing_x(
-            f"Balcony_F{floor+1}_Back",
-            y + 1.52,
-            z,
-            2.45,
-            1.0
-        )
-    else:
-        railing_x(
-            f"Balcony_F{floor+1}_Front",
-            y - 1.52,
-            z,
-            2.45,
-            1.0
-        )
-        railing_y(
-            f"Balcony_F{floor+1}_Outer",
-            x - 1.20,
-            z,
-            3.05,
-            1.0
-        )
+    railing_x(f"{name}_Front", x, y - 1.52, top, 2.45)
+    railing_x(f"{name}_Back", x, y + 1.52, top, 2.45)
+    railing_y(f"{name}_Outer", x + sgn * 1.20, y, top, 3.05)
+
 
 # ============================================================
-# FIRE ESCAPE / EXTERNAL STAIRS
+# FIRE ESCAPE (right side)
 # ============================================================
 
-def stair_flight(name, start, end, steps=10, width=1.25):
-    start = Vector(start)
-    end = Vector(end)
+FE_X = BUILDING_W / 2 + 1.25
+FE_Y = 0.55
 
+
+def fe_platform_z(f):
+    return floor_z(f) + 0.28
+
+
+def stair_flight(name, x, y_start, y_end, z_top_start, steps=13, width=1.0):
+    """Stairs running along Y, rising FLOOR_H from one platform surface to the next."""
+    rise = FLOOR_H / steps
     for i in range(steps):
-        t = i / max(1, steps - 1)
-        p = start.lerp(end, t)
+        y = y_start + (y_end - y_start) * i / (steps - 1)
+        top = z_top_start + (i + 1) * rise
+        cube(f"{name}_Step_{i+1}", (x, y, top - 0.05), (width, 0.24, 0.10), M["dark2"], 0.015, "FIRE_ESCAPE")
 
-        # Each step is a thin metal slab.
-        cube(
-            f"{name}_Step_{i+1}",
-            p,
-            (width, 0.34, 0.12),
-            DARK2,
-            0.015,
-            COL_FIRE_ESCAPE
-        )
+    for sx in (-width / 2 + 0.05, width / 2 - 0.05):
+        beam_between(f"{name}_Stringer",
+                     (x + sx, y_start, z_top_start + rise - 0.16),
+                     (x + sx, y_end, z_top_start + FLOOR_H - 0.16),
+                     0.08, M["dark"], "FIRE_ESCAPE")
 
-        # Side stringers.
-        if i < steps - 1:
-            p2 = start.lerp(end, (i + 1) / max(1, steps - 1))
-            for sx in (-width/2 + 0.08, width/2 - 0.08):
-                beam_between(
-                    f"{name}_Stringer_{i}_{sx}",
-                    (p.x + sx, p.y, p.z - 0.12),
-                    (p2.x + sx, p2.y, p2.z - 0.12),
-                    0.075, DARK, COL_FIRE_ESCAPE
-                )
 
 def build_fire_escape():
-    # Fire escape on the right/back side, matching the reference silhouette.
-    for floor in (0, 1, 2):
-        z = WALL_Z0 + floor * FLOOR_H + 0.28
-        x = BUILDING_W/2 + 1.25
-        y = 0.55
+    for f in range(FLOORS):
+        z = fe_platform_z(f)
+        top = z + 0.08
+        cube(f"FireEscape_Platform_F{f+1}", (FE_X, FE_Y, z), (2.40, 3.0, 0.16), M["dark2"], 0.025, "FIRE_ESCAPE")
+        railing_x(f"FE_Rail_F{f+1}_Front", FE_X, FE_Y - 1.45, top, 2.40, 1.05, "FIRE_ESCAPE")
+        railing_x(f"FE_Rail_F{f+1}_Back", FE_X, FE_Y + 1.45, top, 2.40, 1.05, "FIRE_ESCAPE")
+        railing_y(f"FE_Rail_F{f+1}_Outer", FE_X + 1.17, FE_Y, top, 2.9, 1.05, "FIRE_ESCAPE")
 
-        # Platform.
-        cube(
-            f"FireEscape_Platform_F{floor+1}",
-            (x, y, z),
-            (2.40, 3.0, 0.16),
-            DARK2,
-            0.025,
-            COL_FIRE_ESCAPE
-        )
-
-        # Platform railings.
-        railing_x(
-            f"FireEscape_Railing_F{floor+1}_Front",
-            y - 1.45,
-            z,
-            2.40,
-            1.05
-        )
-        railing_y(
-            f"FireEscape_Railing_F{floor+1}_Outer",
-            x + 1.17,
-            z,
-            2.9,
-            1.05
-        )
-        railing_x(
-            f"FireEscape_Railing_F{floor+1}_Back",
-            y + 1.45,
-            z,
-            2.40,
-            1.05
-        )
-
-    # Zig-zag stair flights between platforms.
-    for floor in (0, 1):
-        z0 = WALL_Z0 + floor * FLOOR_H + 0.40
-        z1 = WALL_Z0 + (floor + 1) * FLOOR_H + 0.40
-
-        if floor % 2 == 0:
-            stair_flight(
-                f"Stairs_{floor+1}_to_{floor+2}",
-                (BUILDING_W/2 + 0.15, -0.95, z0),
-                (BUILDING_W/2 + 2.25, 0.95, z1),
-                11,
-                1.25
-            )
+    for f in range(FLOORS - 1):
+        top = fe_platform_z(f) + 0.08
+        if f % 2 == 0:
+            stair_flight(f"Stairs_{f+1}_to_{f+2}", FE_X, -0.6, 1.7, top)
         else:
-            stair_flight(
-                f"Stairs_{floor+1}_to_{floor+2}",
-                (BUILDING_W/2 + 2.25, 0.95, z0),
-                (BUILDING_W/2 + 0.15, -0.95, z1),
-                11,
-                1.25
-            )
+            stair_flight(f"Stairs_{f+1}_to_{f+2}", FE_X, 1.7, -0.6, top)
 
-    # Vertical support posts.
-    for x in (BUILDING_W/2 + 0.15, BUILDING_W/2 + 2.35):
-        beam_between(
-            "FireEscape_VerticalSupport",
-            (x, 0.55, 0.15),
-            (x, 0.55, WALL_Z0 + FLOORS*FLOOR_H),
-            0.10, DARK, COL_FIRE_ESCAPE
-        )
+    # Vertical supports at the platform corners.
+    z_top = fe_platform_z(FLOORS - 1) + 0.08
+    for x in (BUILDING_W / 2 + 0.2, BUILDING_W / 2 + 2.3):
+        for y in (FE_Y - 1.4, FE_Y + 1.4):
+            beam_between("FireEscape_Support", (x, y, 0.0), (x, y, z_top), 0.10, M["dark"], "FIRE_ESCAPE")
+
 
 # ============================================================
-# ROOFTOP
+# ROOF
 # ============================================================
 
 def build_roof():
-    roof_z = WALL_Z0 + FLOORS * FLOOR_H + 0.20
+    cube("Roof_Slab", (0, 0, ROOF_Z), (BUILDING_W + 0.45, BUILDING_D + 0.45, 0.25), M["roof"], 0.04, "ROOF")
 
-    cube(
-        "Roof_Slab",
-        (0, 0, roof_z),
-        (BUILDING_W + 0.45, BUILDING_D + 0.45, 0.25),
-        ROOF,
-        0.04,
-        COL_ROOF
-    )
+    railing_x("Roof_Rail_Front", 0, -BUILDING_D / 2 - 0.15, ROOF_TOP, BUILDING_W + 0.25, 1.05, "ROOF")
+    railing_x("Roof_Rail_Back", 0, BUILDING_D / 2 + 0.15, ROOF_TOP, BUILDING_W + 0.25, 1.05, "ROOF")
+    railing_y("Roof_Rail_Left", -BUILDING_W / 2 - 0.15, 0, ROOF_TOP, BUILDING_D + 0.25, 1.05, "ROOF")
+    railing_y("Roof_Rail_Right", BUILDING_W / 2 + 0.15, 0, ROOF_TOP, BUILDING_D + 0.25, 1.05, "ROOF")
 
-    # Roof perimeter railings.
-    railing_x(
-        "Roof_Railing_Front",
-        -BUILDING_D/2 - 0.15,
-        roof_z,
-        BUILDING_W + 0.25,
-        1.05
-    )
-    railing_x(
-        "Roof_Railing_Back",
-        BUILDING_D/2 + 0.15,
-        roof_z,
-        BUILDING_W + 0.25,
-        1.05
-    )
-    railing_y(
-        "Roof_Railing_Left",
-        -BUILDING_W/2 - 0.15,
-        roof_z,
-        BUILDING_D + 0.25,
-        1.05
-    )
-    railing_y(
-        "Roof_Railing_Right",
-        BUILDING_W/2 + 0.15,
-        roof_z,
-        BUILDING_D + 0.25,
-        1.05
-    )
+    room_h = 1.55
+    cube("Rooftop_Access_Room", (0.5, 0.45, ROOF_TOP + room_h / 2), (2.0, 1.75, room_h), M["yellow"], 0.04, "ROOF")
+    cube("Rooftop_Access_Door", (0.5, 0.45 - 0.875, ROOF_TOP + 0.575), (0.85, 0.10, 1.15), M["door"], 0.02, "ROOF")
 
-    # Small rooftop access room.
-    cube(
-        "Rooftop_Access_Room",
-        (0.5, 0.45, roof_z + 0.90),
-        (2.0, 1.75, 1.55),
-        YELLOW,
-        0.04,
-        COL_ROOF
-    )
-
-    cube(
-        "Rooftop_Access_Door",
-        (0.5, -0.445, roof_z + 0.82),
-        (0.85, 0.10, 1.15),
-        WOOD,
-        0.02,
-        COL_ROOF
-    )
-
-# ============================================================
-# CORNER POSTS / ARCHITECTURAL DETAILS
-# ============================================================
 
 def build_corner_posts():
-    total_top = WALL_Z0 + FLOORS * FLOOR_H
+    off = 0.17                     # outside the wall face (posts used to be hidden inside the wall)
+    for x in (-BUILDING_W / 2 - off, BUILDING_W / 2 + off):
+        for y in (-BUILDING_D / 2 - off, BUILDING_D / 2 + off):
+            beam_between("Corner_Post", (x, y, 0.0), (x, y, CORNICE_TOP), 0.14, M["dark"], "BUILDING")
+            for f in range(FLOORS):
+                cube("Corner_Decor", (x, y, floor_z(f) + 0.30), (0.32, 0.32, 0.42), M["dark2"], 0.02, "BUILDING")
 
-    for x in (-BUILDING_W/2 - 0.05, BUILDING_W/2 + 0.05):
-        for y in (-BUILDING_D/2 - 0.05, BUILDING_D/2 + 0.05):
-            beam_between(
-                "Corner_Post",
-                (x, y, 0.18),
-                (x, y, total_top),
-                0.14, DARK, COL_BUILDING
-            )
 
-            # Small square decorative blocks at floor levels.
-            for floor in range(FLOORS):
-                z = WALL_Z0 + floor * FLOOR_H + 0.30
-                cube(
-                    "Corner_Decor",
-                    (x, y, z),
-                    (0.32, 0.32, 0.42),
-                    DARK2,
-                    0.02,
-                    COL_BUILDING
-                )
+def add_building_sign():
+    add_text("Building_Sign", "APARTMENTS",
+             (0.5, 0.45 - 0.875 - 0.02, ROOF_TOP + 1.40), 0.22, M["white"])
+
 
 # ============================================================
-# GROUND
-# ============================================================
-
-def build_ground():
-    cube(
-        "Ground",
-        (0, 0, -0.22),
-        (20, 18, 0.35),
-        GROUND,
-        0.05,
-        COL_BUILDING
-    )
-
-    # Simple front pavement.
-    cube(
-        "Front_Pavement",
-        (0, -5.0, -0.01),
-        (12, 4.0, 0.12),
-        DARK2,
-        0.03,
-        COL_BUILDING
-    )
-
-# ============================================================
-# LIGHTING / CAMERA
+# WORLD / CAMERA / LIGHTS / RENDER
 # ============================================================
 
 def setup_world():
@@ -804,99 +426,74 @@ def setup_world():
     if world is None:
         world = bpy.data.worlds.new("World")
         bpy.context.scene.world = world
-
-    world.use_nodes = True
+    if world.node_tree is None:
+        world.use_nodes = True
     bg = world.node_tree.nodes.get("Background")
     if bg:
         bg.inputs["Color"].default_value = (0.018, 0.022, 0.028, 1)
         bg.inputs["Strength"].default_value = 0.28
 
-def add_area_light(name, location, energy, size):
-    bpy.ops.object.light_add(type='AREA', location=location)
-    light = bpy.context.object
-    light.name = name
-    light.data.energy = energy
-    light.data.shape = 'DISK'
-    light.data.size = size
-    move_to_collection(light, COL_LIGHTS)
-    return light
 
-def point_camera(camera, target):
-    direction = Vector(target) - camera.location
-    camera.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
+def point_at(obj, target):
+    direction = Vector(target) - obj.location
+    obj.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
+
 
 def setup_camera():
-    bpy.ops.object.camera_add(
-        location=(15.5, -18.0, 12.0)
-    )
-    cam = bpy.context.object
-    cam.name = "Main_Camera"
-    cam.data.lens = 52
-    cam.data.sensor_width = 36
-    point_camera(cam, (0, 0, 5.3))
+    cam_data = bpy.data.cameras.new("Main_Camera")
+    cam_data.lens = 45
+    cam_data.sensor_width = 36
+    cam_data.clip_end = 200
+    cam = bpy.data.objects.new("Main_Camera", cam_data)
+    cam.location = (15.5, -18.0, 12.0)
+    bpy.context.scene.collection.objects.link(cam)
+    point_at(cam, (0.5, 0, 5.3))
     bpy.context.scene.camera = cam
 
+
+def add_area_light(name, location, energy, size, target):
+    data = bpy.data.lights.new(name, 'AREA')
+    data.energy = energy
+    data.shape = 'DISK'
+    data.size = size
+    obj = bpy.data.objects.new(name, data)
+    obj.location = location
+    COLS["LIGHTS"].objects.link(obj)
+    point_at(obj, target)
+    return obj
+
+
 def setup_lights():
-    add_area_light(
-        "Key_Light",
-        (7, -10, 15),
-        1500,
-        7
-    )
-    key = bpy.context.object
-    point_camera(key, (0, 0, 5))
+    add_area_light("Key_Light", (7, -10, 15), 1500, 7, (0, 0, 5))
+    add_area_light("Fill_Light", (-9, -3, 9), 850, 6, (0, 0, 5))
+    add_area_light("Rim_Light", (4, 8, 13), 1100, 5, (0, 0, 6))
 
-    add_area_light(
-        "Fill_Light",
-        (-9, -3, 9),
-        850,
-        6
-    )
-    fill = bpy.context.object
-    point_camera(fill, (0, 0, 5))
-
-    add_area_light(
-        "Rim_Light",
-        (4, 8, 13),
-        1100,
-        5
-    )
-    rim = bpy.context.object
-    point_camera(rim, (0, 0, 6))
-
-# ============================================================
-# RENDER SETTINGS
-# ============================================================
 
 def setup_render():
     scene = bpy.context.scene
 
-    scene.render.engine = 'BLENDER_EEVEE_NEXT'
+    # Blender 5.x: 'BLENDER_EEVEE'; 4.2-4.5: 'BLENDER_EEVEE_NEXT'.
+    for engine in ('BLENDER_EEVEE', 'BLENDER_EEVEE_NEXT'):
+        try:
+            scene.render.engine = engine
+            break
+        except TypeError:
+            continue
+
     scene.render.resolution_x = 700
     scene.render.resolution_y = 850
     scene.render.resolution_percentage = 100
-
     scene.render.image_settings.file_format = 'PNG'
     scene.render.film_transparent = False
 
-    # Ambient occlusion/contact-like shading is naturally handled by Eevee.
-    scene.view_settings.look = 'AgX - Medium High Contrast'
+    try:
+        scene.view_settings.view_transform = 'AgX'
+        scene.view_settings.look = 'AgX - Medium High Contrast'
+    except TypeError:
+        pass   # look names differ between versions; default look is fine
 
     scene.render.filepath = "//low_poly_building.png"
 
-# ============================================================
-# OPTIONAL SIGN
-# ============================================================
-
-def add_building_sign():
-    add_text(
-        "Building_Sign",
-        "APARTMENTS",
-        (0, -BUILDING_D/2 - 0.22, WALL_Z0 + FLOORS*FLOOR_H + 1.7),
-        0.42,
-        WHITE,
-        rotation=(math.pi/2, 0, 0)
-    )
 
 # ============================================================
 # BUILD
@@ -904,6 +501,8 @@ def add_building_sign():
 
 def build():
     clear_scene()
+    init_collections()      # must come after clear_scene()
+    init_materials()        # must come after clear_scene()
 
     setup_world()
 
@@ -914,30 +513,27 @@ def build():
     build_front_door()
     build_corner_posts()
 
-    # Upper-floor exterior balconies / fire escape.
-    build_balcony("right", 1)
-    build_balcony("right", 2)
+    # Balconies on the left (the fire escape occupies the right side).
+    build_balcony("left", 1)
+    build_balcony("left", 2)
     build_fire_escape()
 
     build_roof()
+    if ADD_SIGN:
+        add_building_sign()
 
     setup_camera()
     setup_lights()
     setup_render()
 
-    # Select the building root-ish objects for convenience.
-    bpy.ops.object.select_all(action='DESELECT')
-
-    # Save a .blend beside the script if Blender has a known file path.
-    try:
-        bpy.ops.wm.save_as_mainfile(filepath="//low_poly_building.blend")
-    except Exception:
-        pass
+    if SAVE_BLEND and bpy.data.is_saved:
+        bpy.ops.wm.save_mainfile()
 
     print("=" * 60)
     print("LOW-POLY BUILDING GENERATED")
     print("3 floors, windows, cornices, balconies, fire escape, roof")
     print("Render path: //low_poly_building.png")
     print("=" * 60)
+
 
 build()
